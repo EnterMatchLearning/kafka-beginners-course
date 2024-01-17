@@ -2,6 +2,7 @@ package org.example;
 
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,9 +11,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
 
-public class ConsumerDemo {
+public class ConsumerDemoWithShutdown {
 
-    public static final Logger logger = LoggerFactory.getLogger(ConsumerDemo.class);
+    public static final Logger logger = LoggerFactory.getLogger(ConsumerDemoWithShutdown.class);
 
     public static void main(String[] args) {
         logger.info("I am a kafka consumer!");
@@ -26,20 +27,45 @@ public class ConsumerDemo {
         // create the consumer
         KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties);
 
-        // subscribe to a topic
-        consumer.subscribe(List.of(topic));
+        // get a reference to the main thread
+        Thread mainThread = Thread.currentThread();
 
-        // poll for data
-        while (true) {
-            logger.info("Polling for data...");
+        // adding the shutdown hook
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            logger.info("Detected a shutdown, let's exit by calling consumer.wakeup()...");
+            consumer.wakeup();
 
-            ConsumerRecords<String, String> records =
-                    consumer.poll(Duration.ofMillis(100));
+            // join the main thread to allow the execution of the code in the main thread
+            try {
+                mainThread.join();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }));
 
-            records.forEach(record -> {
-                logger.info("Key: " + record.key() + " | Value: " + record.value());
-                logger.info("Partition: " + record.partition() + " | Offset: " + record.offset());
-            });
+        try {
+            // subscribe to a topic
+            consumer.subscribe(List.of(topic));
+
+            // poll for data
+            while (true) {
+//                logger.info("Polling for data...");
+
+                ConsumerRecords<String, String> records =
+                        consumer.poll(Duration.ofMillis(100));
+
+                records.forEach(record -> {
+                    logger.info("Key: " + record.key() + " | Value: " + record.value());
+                    logger.info("Partition: " + record.partition() + " | Offset: " + record.offset());
+                });
+            }
+        } catch (WakeupException e) {
+            logger.info("Consumer is starting to shut down");
+        } catch (Exception e) {
+            logger.error("Unexpected exception in the consumer", e);
+        } finally {
+            consumer.close();
+            logger.info("The consumer is now gracefully shut down");
         }
 
     }
